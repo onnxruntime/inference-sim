@@ -39,7 +39,7 @@ jobs:
       - name: Preserve currently deployed assets
         run: |
           node scripts/preserve-deployed-assets.mjs \
-            https://www.justinchuby.com/inference-sim/ \
+            https://onnxruntime.github.io/inference-sim/ \
             packages/web/.previous-pages-assets
 
       - name: Build web app for Pages

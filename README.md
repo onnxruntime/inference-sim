@@ -7,8 +7,6 @@ The project is intentionally split between exact protocol checks and calibrated
 performance estimates. It can prove ledger and state-transition properties; it
 does not claim hardware-accurate latency without calibration data.
 
-**Live workbench:** [justinchuby.com/inference-sim](https://www.justinchuby.com/inference-sim/)
-
 ## What You Can Model
 
 - Pick from 30 built-in model presets spanning 0.6B to 1T parameters and the
@@ -221,8 +219,8 @@ Use `pnpm sim --help` for the complete command list.
 
 ### Formal Models
 
-Protocol-level state machines live in the onnx-genai repository under
-`specs/tla`. `KvAdmission.tla` models the continuous-batching KV pool and
+Protocol-level state machines live under [`specs/tla`](specs/tla). `KvAdmission.tla`
+models the continuous-batching KV pool and
 exhaustively checks that the admission rule implemented in
 `packages/core/src/serving.ts` keeps the pool deadlock-free.
 `NodeFailure.tla` models node-fault quiescence and checks that a failed node
