@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+  tla:
+    name: Check TLA+ specifications
+    runs-on: ubuntu-latest
+    env:
+      TLA2TOOLS_URL: https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+      TLA2TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Download TLA+ tools
+        run: |
+          curl --fail --location --retry 3 \
+            "${TLA2TOOLS_URL}" \
+            --output "${RUNNER_TEMP}/tla2tools.jar"
+          echo "${TLA2TOOLS_SHA256}  ${RUNNER_TEMP}/tla2tools.jar" | sha256sum --check -
+
+      - name: Run TLC
+        env:
+          TLA2TOOLS_JAR: ${{ runner.temp }}/tla2tools.jar
+          TLC_WORKERS: 2
+        run: ./specs/tla/check.sh
