@@ -1,0 +1,26 @@
+{
+  "name": "@inference-sim/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "inference-sim": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@inference-sim/core": "workspace:*",
+    "@inference-sim/onnx-inspector": "workspace:*",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@bufbuild/protobuf": "2.12.1",
+    "@types/node": "^24.0.0",
+    "onnx-buf": "1.20.0-1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,287 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildMultiNodeLanScenario,
+  buildScenarioPreset,
+} from "@inference-sim/core";
+import {
+  buildTopologyGraph,
+  formatDuration,
+  formatRate,
+  topologyEdgeTouchesNode,
+  topologyRelatedNodeIds,
+} from "./topology-graph.js";
+
+describe("topology graph projection", () => {
+  it("projects every device, memory domain, access, and directed link", () => {
+    const scenario = buildScenarioPreset("multi-gpu");
+    const graph = buildTopologyGraph(scenario);
+    const systemIds = new Set([
+      ...scenario.devices.map((device) => device.nodeId),
+      ...scenario.memoryDomains.map((domain) => domain.nodeId),
+    ]);
+
+    expect(graph.nodes).toHaveLength(
+      systemIds.size + scenario.devices.length + scenario.memoryDomains.length,
+    );
+    expect(graph.nodes.find((node) => node.id === "system:node0"))
+      .toMatchObject({
+        type: "topologyGroup",
+        data: {
+          category: "system",
+          title: "node0",
+        },
+      });
+    expect(graph.nodes.find((node) => node.id === "node0:gpu0"))
+      .toMatchObject({
+        parentId: "system:node0",
+        extent: "parent",
+        data: {
+          category: "device",
+        },
+      });
+    expect(graph.edges).toHaveLength(
+      scenario.devices.reduce(
+        (sum, device) => sum + device.memoryDomainIds.length,
+        0,
+      ) + 4,
+    );
+    expect(graph.edges.filter((edge) => edge.data.category === "link"))
+      .toHaveLength(4);
+    expect(graph.edges.find((edge) => edge.id === "node0:nvlink:forward"))
+      .toMatchObject({
+        source: "node0:gpu0:vram",
+        target: "node0:gpu1:vram",
+        label: "600 GB/s · 500 ns",
+        interactionWidth: 28,
+        markerStart: { type: "arrowclosed" },
+        markerEnd: { type: "arrowclosed" },
+        data: { scope: "intra-node", bidirectional: true },
+      });
+    expect(graph.edges.find((edge) => edge.data.category === "access"))
+      .toMatchObject({ interactionWidth: 18 });
+    expect(graph.edges.find((edge) => (
+      edge.id === "access:node0:gpu0:node0:gpu0:vram"
+    ))).toMatchObject({
+      style: { stroke: "#059669", strokeWidth: 2.5 },
+      data: { kind: "local memory", memoryRelation: "local" },
+    });
+    expect(graph.edges.find((edge) => (
+      edge.id === "access:node0:gpu0:node0:host"
+    ))).toMatchObject({
+      style: { stroke: "#a1a1aa", strokeWidth: 1, strokeDasharray: "4 4" },
+      data: { kind: "memory access", memoryRelation: "accessible" },
+    });
+    expect(topologyRelatedNodeIds(scenario, "node0:gpu0")).toEqual([
+      "node0:gpu0",
+      "node0:gpu0:vram",
+    ]);
+    expect(topologyRelatedNodeIds(scenario, "node0:host")).toEqual([
+      "node0:host",
+    ]);
+    expect(graph.edges.find((edge) => edge.id === "node0:pcie0:forward")?.label)
+      .toBe("32 GB/s · 1.5 us");
+    expect(graph.edges.find((edge) => edge.id === "node0:pcie0:forward"))
+      .toMatchObject({
+        sourceHandle: "top-source-lane-2",
+        targetHandle: "bottom-target",
+        type: "smoothstep",
+        pathOptions: { offset: 32 },
+      });
+    expect(graph.edges.find((edge) => edge.id === "node0:pcie1:forward")?.label)
+      .toBe("32 GB/s · 1.5 us");
+    expect(graph.edges.find((edge) => edge.id === "node0:pcie1:forward"))
+      .toMatchObject({
+        type: "smoothstep",
+        sourceHandle: "top-source-lane-5",
+        pathOptions: { offset: 68 },
+      });
+    const vram = graph.nodes.find((node) => node.id === "node0:gpu0:vram")!;
+    const gpu = graph.nodes.find((node) => node.id === "node0:gpu0")!;
+    const host = graph.nodes.find((node) => node.id === "node0:host")!;
+    expect(vram.position.y).toBeLessThan(host.position.y);
+    expect(host.position.y - vram.position.y).toBeGreaterThanOrEqual(180);
+    expect(vram.position.x).toBe(gpu.position.x);
+  });
+
+  it("separates nodes deterministically across machines", () => {
+    const first = buildTopologyGraph(buildScenarioPreset("multi-node"));
+    const second = buildTopologyGraph(buildScenarioPreset("multi-node"));
+    expect(first).toEqual(second);
+    const node0 = first.nodes.find((node) => node.id === "system:node0")!;
+    const node1 = first.nodes.find((node) => node.id === "system:node1")!;
+    expect(node0.position.x + Number(node0.style?.width))
+      .toBeLessThan(node1.position.x);
+    expect(
+      first.nodes
+        .filter((node) => node.data.nodeId === "node0")
+        .every((node) => (
+          node.data.category === "system"
+          || node.parentId === "system:node0"
+        )),
+    ).toBe(true);
+    expect(
+      first.edges
+        .filter((edge) => edge.data.category === "link")
+        .some((edge) => edge.data.scope === "inter-node"),
+    ).toBe(true);
+  });
+
+  it("keeps asymmetric reverse links on separate visual paths", () => {
+    const preset = buildScenarioPreset("multi-gpu");
+    const scenario = {
+      ...preset,
+      links: preset.links.map((link) => link.id === "node0:nvlink:reverse"
+        ? { ...link, bandwidthBytesPerSec: link.bandwidthBytesPerSec / 2 }
+        : link),
+    };
+    const graph = buildTopologyGraph(scenario);
+    const nvlinkEdges = graph.edges.filter((edge) => (
+      edge.data.kind === "nvlink"
+    ));
+
+    expect(nvlinkEdges).toHaveLength(2);
+    expect(nvlinkEdges.every((edge) => edge.markerStart === undefined))
+      .toBe(true);
+  });
+
+  it("projects advanced network resources into the logical link path", () => {
+    const scenario = buildMultiNodeLanScenario(2, {
+      advanced: true,
+      linkKind: "infiniband",
+      transport: "gpudirect_rdma",
+    });
+    const graph = buildTopologyGraph(scenario);
+    const logicalLink = scenario.links.find(
+      (link) => link.id === "lan:node0:node1",
+    )!;
+    const pathEdges = graph.edges.filter((edge) => (
+      edge.id.startsWith(`${logicalLink.id}:path:`)
+    ));
+
+    expect(graph.nodes.find((node) => node.id === "node0:nic0"))
+      .toMatchObject({
+        parentId: "system:node0",
+        extent: "parent",
+        data: {
+          category: "network",
+          kind: "NIC / HCA",
+          accent: "nic",
+        },
+      });
+    const fabric = graph.nodes.find((node) => node.id === "lan:fabric0")!;
+    expect(fabric).not.toHaveProperty("parentId");
+    expect(fabric).toMatchObject({
+      data: {
+        category: "network",
+        kind: "switch fabric",
+        accent: "fabric",
+      },
+    });
+    expect(pathEdges.map((edge) => [edge.source, edge.target])).toEqual([
+      ["node0:gpu0:vram", "node0:nic0"],
+      ["node0:nic0", "lan:fabric0"],
+      ["lan:fabric0", "node1:nic0"],
+      ["node1:nic0", "node1:gpu0:vram"],
+    ]);
+    expect(pathEdges[1]).toMatchObject({
+      label: "gpudirect_rdma · 50 GB/s · 3.0 us",
+      data: {
+        transport: "gpudirect_rdma",
+        logicalSourceId: "node0:gpu0:vram",
+        logicalTargetId: "node1:gpu0:vram",
+        networkResourceIds: [
+          "node0:nic0",
+          "lan:fabric0",
+          "node1:nic0",
+        ],
+        segmentCount: 4,
+      },
+    });
+    expect(pathEdges[3].markerEnd).toMatchObject({ type: "arrowclosed" });
+    expect(pathEdges.every((edge) => (
+      topologyEdgeTouchesNode(edge, "node0:gpu0:vram")
+    ))).toBe(true);
+    expect(pathEdges.every((edge) => (
+      topologyEdgeTouchesNode(edge, "lan:fabric0")
+    ))).toBe(true);
+    expect(pathEdges.some((edge) => (
+      topologyEdgeTouchesNode(edge, "unrelated")
+    ))).toBe(false);
+  });
+
+  it("formats transport evidence without hiding units", () => {
+    expect(formatRate(32_000_000_000)).toBe("32 GB/s");
+    expect(formatDuration(500)).toBe("500 ns");
+    expect(formatDuration(1_500)).toBe("1.5 us");
+  });
+
+  it("shows resource limits separately from physical capacity", () => {
+    const preset = buildScenarioPreset("single-gpu-cpu");
+    const scenario = {
+      ...preset,
+      memoryDomains: preset.memoryDomains.map((domain) => (
+        domain.kind === "device"
+          ? { ...domain, resourceLimitBytes: 24 * 1024 ** 3 }
+          : domain
+      )),
+      execution: {
+        ...preset.execution,
+        features: { ssdStreaming: false },
+      },
+    };
+    const graph = buildTopologyGraph(scenario);
+    expect(graph.nodes.find((node) => node.id === "node0:gpu0:vram")?.data)
+      .toMatchObject({
+        details: [
+          "24.0 GiB allocatable / 80.0 GiB physical",
+          "2,000 GB/s local",
+          "80 ns latency",
+          "non-coherent",
+        ],
+      });
+    expect(graph.nodes.find((node) => node.id === "node0:storage")?.data
+      .details[0]).toBe("disabled / 2.0 TiB physical");
+  });
+
+  it("puts a rate on the edge every weight and KV byte crosses", () => {
+    // The unified pool's rate was printed inside the memory node in small
+    // text while the edge from the chip to it was an unlabelled dash, so the
+    // only labelled edge on a laptop diagram was the SSD, which is the one
+    // that is usually idle.
+    const graph = buildTopologyGraph(
+      buildScenarioPreset("panther-lake-x9-388h-32gb"),
+    );
+    const toUnified = graph.edges.filter((edge) => (
+      edge.data?.category === "access"
+      && edge.target === "panther-lake:unified"
+    ));
+
+    expect(toUnified).toHaveLength(3);
+    for (const edge of toUnified) {
+      expect(edge.label, edge.source).toContain("153.6 GB/s");
+      expect(edge.data!.bandwidthBytesPerSec, edge.source)
+        .toBeCloseTo(153.6e9, -8);
+    }
+  });
+
+  it("charges a device the bus it crosses, not the memory it reaches", () => {
+    // A discrete GPU reading host DRAM gets PCIe, not the 83 GB/s the DRAM
+    // itself runs at. Labelling this edge with the domain's own rate would
+    // overstate offload by more than double.
+    const graph = buildTopologyGraph(buildScenarioPreset("rtx-4090-desktop"));
+    const find = (source: string, target: string) => graph.edges.find(
+      (edge) => edge.data?.category === "access"
+        && edge.source === source
+        && edge.target === target,
+    )!;
+
+    // Its own memory, at its own rate.
+    expect(find("desktop:rtx4090", "desktop:rtx4090:vram").label)
+      .toContain("1,008 GB/s");
+    // Host memory, over the bus between them.
+    expect(find("desktop:rtx4090", "desktop:host").label).toContain("32 GB/s");
+    // And the CPU, attached to that same memory directly, is not charged the
+    // GPU's bus for it.
+    expect(find("desktop:cpu", "desktop:host").label).toContain("83 GB/s");
+  });
+});

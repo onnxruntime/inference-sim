@@ -1,0 +1,714 @@
+import type {
+  CalibrationDataset,
+  CalibrationEvidenceKind,
+  CalibrationFitDiagnostic,
+  TransportCalibrationFitDiagnostic,
+  ConfidenceClass,
+  ExpertCacheMetrics,
+  ExpertCachePartitionSnapshot,
+  ExpertRouteResult,
+  PlanTraceEvent,
+  RankCompletion,
+  RankTerminalState,
+  ExpertCacheWorkloadResult,
+  ScenarioMemoryLedgerEntry,
+  SimulationResultArtifact,
+  SpeculativeWorkloadIteration,
+  SpeculativeWorkloadMetrics,
+  SpeculativeWorkloadResult,
+  SpeculativeProposerFamily,
+  SpeculativeTokenMismatch,
+  SpeculativeTokenTrace,
+  ServingMetrics,
+  ServingRequestResult,
+  TopologyServingComparisonResult,
+  TopologyServingResult,
+  TopologyResourceUtilization,
+  TopologyWorkloadMetrics,
+  TopologyWorkloadResult,
+  MediaInputProfile,
+  MediaModality,
+  ModelProfile,
+  StaticAnalysisResult,
+  MemoryPolicyConfig,
+  ParallelismConfig,
+  QuantType,
+  StaticSearchObjective,
+  StaticSearchResult,
+  SimulationScenario,
+  TopologyPipelineWork,
+  MultiModelMetrics,
+  MultiModelResult,
+} from "@inference-sim/core";
+
+export type WorkloadMode =
+  | "serving"
+  | "pipeline"
+  | "speculative"
+  | "expert-cache"
+  | "fault"
+  | "co-residency";
+
+export interface DashboardCoResidencyModel {
+  readonly preset: string;
+  readonly weightDtype: QuantType;
+  readonly contextTokens: number;
+  readonly pinned: boolean;
+  readonly requestCount: number;
+}
+
+export interface DashboardCoResidencyConfig {
+  readonly models: readonly DashboardCoResidencyModel[];
+  /** Seconds between one model's requests, used to interleave the streams. */
+  readonly requestGapMs: number;
+  readonly promptTokens: number;
+  readonly outputTokens: number;
+}
+
+export interface DashboardFaultConfig {
+  /** Empty selects the first node that participates in the compiled plan. */
+  readonly failedNodeId: string;
+  readonly faultAtUs: number;
+  /** Abort deadline for surviving ranks, relative to the fault. */
+  readonly quiesceTimeoutUs: number;
+  readonly executionCount: number;
+}
+
+export interface DashboardFaultRankState {
+  readonly rankId: string;
+  readonly deviceId: string;
+  readonly nodeId: string;
+  readonly status: "succeeded" | "failed" | "aborted";
+  readonly terminalAtNs: number;
+  readonly onFailedNode: boolean;
+}
+
+export interface DashboardFaultResult {
+  readonly failedNodeId: string;
+  readonly faultAtNs: number;
+  readonly quiesceTimeoutNs: number;
+  readonly abortDeadlineNs: number;
+  readonly quiescedAtNs: number;
+  /** Quiescence the trace would have reported without the abort deadline. */
+  readonly drainedAtNs: number;
+  readonly executionCount: number;
+  readonly plannedOperations: number;
+  readonly retainedOperations: number;
+  readonly droppedOperations: number;
+  readonly replayAppliedEvents: number;
+  readonly rankStates: readonly DashboardFaultRankState[];
+}
+
+export interface DashboardModelBinding {
+  readonly source: "builtin_model" | "local_model_package";
+  readonly displayName: string;
+  readonly modelFingerprints: readonly string[];
+  readonly targetModelFingerprint: string;
+  readonly componentCount: number;
+  readonly totalParameters: number;
+  readonly weightBytes: number;
+  readonly modelFormat?: DashboardModelFormat;
+  readonly executionProfile: DashboardModelExecutionProfile;
+  readonly pipelineExecution?: TopologyPipelineWork;
+  /**
+   * Media modalities this checkpoint accepts, with what one item of each
+   * costs the decoder. Present whenever the model declares media inputs, so a
+   * text-only run can still report what enabling one would cost.
+   */
+  readonly mediaInputs?: readonly MediaInputProfile[];
+  readonly executionCoverage: DashboardModelExecutionCoverage;
+  readonly pipelineStrategy?: string;
+  readonly speculativeFamilies: readonly SpeculativeProposerFamily[];
+}
+
+export interface DashboardModelFormat {
+  readonly weightDtypes: readonly string[];
+  readonly weightQuantization:
+    | "none"
+    | "fp8"
+    | "int8"
+    | "int4"
+    | "int2"
+    | "int1"
+    | "nf4"
+    | "mixed"
+    | "unknown";
+  readonly kvCacheDtype: QuantType | "unknown";
+  readonly activationDtype: QuantType | "unknown";
+  readonly evidence: "preset_declared" | "onnx_inferred";
+  readonly runtimeDtypesDefaulted: boolean;
+}
+
+export interface DashboardModelExecutionCoverage {
+  readonly fidelity: "complete" | "partial";
+  readonly scope: "full_model" | "target_component_only";
+  readonly modeledComponentIds: readonly string[];
+  readonly unmodeledComponentIds: readonly string[];
+  readonly limitations: readonly string[];
+}
+
+export interface DashboardModelExecutionProfile {
+  readonly modelId: string;
+  readonly modelName: string;
+  readonly attentionWeightBytesPerToken: number;
+  readonly ffnWeightBytesPerToken: number;
+  /**
+   * Share of `ffnWeightBytesPerToken` read from storage rather than memory,
+   * when routed experts do not all fit. Scenario-dependent, so it is resolved
+   * per run rather than carried by the model binding.
+   */
+  readonly streamedFfnWeightBytesPerToken?: number;
+  readonly forwardFlopsPerToken: number;
+  /**
+   * Dtype the arithmetic runs in. Lets the run resolve the device's published
+   * dense peak so a forward pass is never timed faster than the silicon can
+   * issue, and is the same dtype the roofline chart picks its compute roof
+   * with, so the timing and the chart cannot contradict each other.
+   */
+  readonly computeDtype?: string;
+  readonly kvCacheBytesPerToken?: number;
+  readonly kvCacheEvidence?: "architecture_derived" | "metadata_declared";
+}
+
+export type RooflinePhase =
+  | "prefill"
+  | "decode"
+  | "mixed_batch"
+  | "spec_verify"
+  | "spec_draft"
+  | "pipeline"
+  | "moe";
+
+export interface DashboardRooflineResult {
+  readonly revision: 2;
+  readonly status: "available" | "unavailable";
+  readonly confidence: ConfidenceClass;
+  readonly assumptions: readonly string[];
+  readonly unavailableReason?: string;
+  readonly computeRoof?: {
+    readonly label: string;
+    readonly flopsPerSecond: number;
+    readonly evidence:
+      | "vendor_peak"
+      | "user_declared"
+      | "calibrated_effective"
+      | "heuristic_effective";
+    readonly dtype: string;
+    readonly profileIds?: readonly string[];
+    readonly sourceUrls?: readonly string[];
+  };
+  /**
+   * Why there is no compute ceiling, when there is none. The causes need
+   * opposite advice, so the reader is told which one applies rather than left
+   * to infer that a different dtype might help when nothing would.
+   */
+  readonly computeRoofAbsence?: {
+    readonly reason:
+      | "no_profile"
+      | "no_profile_narrow_dtype"
+      | "profile_publishes_none"
+      | "dtype_not_published"
+      | "mixed_devices";
+    readonly dtype: string;
+    readonly deviceLabels: readonly string[];
+    /** Dtypes the bound hardware does publish, when it publishes any. */
+    readonly publishedDtypes: readonly string[];
+  };
+  readonly bandwidthRoofs: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly kind: "device_memory" | "host_memory" | "interconnect" | "storage";
+    readonly bytesPerSecond: number;
+    readonly confidence: ConfidenceClass;
+  }[];
+  readonly points: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly phase: RooflinePhase;
+    readonly componentId?: string;
+    readonly deviceIds: readonly string[];
+    readonly workFlops: number;
+    readonly activeBytes: number;
+    readonly durationNs: number;
+    readonly arithmeticIntensity: number;
+    readonly predictedFlopsPerSecond: number;
+    readonly predictedTokensPerSecond?: number;
+    readonly limitingRoofId: string;
+    readonly confidence: ConfidenceClass;
+    readonly notes: readonly string[];
+  }[];
+}
+
+export interface DashboardRunConfig {
+  readonly scenarioName:
+    | "rtx-4090-desktop"
+    | "rtx-5090-desktop"
+    | "mac-mini-m4-pro-64gb"
+    | "mac-studio-m3-ultra-512gb"
+    | "ryzen-ai-max-395-128gb"
+    | "panther-lake-x9-388h-32gb"
+    | "arrow-lake-s-285k-64gb"
+    | "cpu-only"
+    | "single-gpu-cpu"
+    | "multi-gpu"
+    | "gpu-npu"
+    | "unified-memory"
+    | "multi-node"
+    | "custom";
+  readonly multiGpuRanks: 2 | 4 | 8;
+  readonly multiNodeCount?: 2 | 3 | 4;
+  readonly customScenario?: SimulationScenario;
+  readonly modelBinding?: DashboardModelBinding;
+  readonly mode: WorkloadMode;
+  readonly seed: number;
+  readonly calibration?: CalibrationDataset;
+  readonly speculative: {
+    readonly family: SpeculativeProposerFamily;
+    readonly outputTokens: number;
+    readonly draftWidth: number;
+    readonly firstPositionAcceptance: number;
+    readonly trace?: SpeculativeTokenTrace;
+  };
+  readonly fault: DashboardFaultConfig;
+  readonly coResidency: DashboardCoResidencyConfig;
+  /**
+   * Which input this run sends. A multimodal checkpoint served text-only is a
+   * real deployment, so media is opt-in rather than implied by the model, and
+   * the modality is named because models price image, audio and video
+   * differently and do not all accept the same ones.
+   */
+  readonly modality: "text" | MediaModality;
+  /** Media items per request when `modality` names a media input. */
+  readonly mediaItemsPerRequest: number;
+  readonly serving: {
+    readonly compareTopologies: boolean;
+    readonly useExpertCache: boolean;
+    readonly decodeMode: "target_only" | SpeculativeProposerFamily;
+    readonly draftWidth: number;
+    readonly firstPositionAcceptance: number;
+    readonly requestCount: number;
+    readonly arrivalGapUs: number;
+    readonly promptTokens: number;
+    readonly outputTokens: number;
+    readonly maxBatchSize: number;
+    readonly maxBatchTokens: number;
+    readonly prefillChunkTokens: number;
+  };
+  readonly expertCache: {
+    readonly placementStrategy: "contiguous" | "round_robin";
+    readonly tokenCount: number;
+    readonly topK: number;
+    readonly expertCount: number;
+    readonly hotSlots: number;
+    readonly warmSlots: number;
+    readonly adaptivePrefetch: boolean;
+  };
+}
+
+export interface DashboardResult {
+  readonly model?: {
+    readonly name: string;
+    readonly source: DashboardModelBinding["source"];
+    readonly fingerprint: string;
+    readonly totalParameters: number;
+    readonly weightBytes: number;
+    readonly modelFormat?: DashboardModelFormat;
+    /**
+     * Present when the model did not fit and its routed experts were left on
+     * storage. A run that reports this is bounded by the storage link, not by
+     * memory bandwidth, which is why it is reported rather than inferred.
+     */
+    readonly expertOffload?: {
+      readonly residentWeightBytes: number;
+      readonly streamedExpertBytes: number;
+      readonly residentExperts: number;
+      readonly totalExperts: number;
+      /** Share of routed reads served from memory. */
+      readonly residentHitFraction: number;
+      readonly streamedBytesPerToken: number;
+    };
+  };
+  readonly scenario: {
+    readonly id: string;
+    readonly family: string;
+    readonly deviceCount: number;
+    readonly linkCount: number;
+    readonly memoryLedger: readonly ScenarioMemoryLedgerEntry[];
+    /** Scenario feature flags, so the result can show what was switched off. */
+    readonly ssdStreaming: boolean;
+  };
+  readonly mode: WorkloadMode;
+  readonly fault?: DashboardFaultResult;
+  readonly coResidency?: {
+    readonly metrics: MultiModelMetrics;
+    readonly loadBandwidthBytesPerSec: number;
+  };
+  readonly durationMs: number;
+  readonly calibration?: {
+    readonly datasetId: string;
+    readonly datasetFingerprint: string;
+    readonly evidenceKind: CalibrationEvidenceKind;
+    readonly fitConfidence: ConfidenceClass;
+    readonly diagnostics: readonly CalibrationFitDiagnostic[];
+    readonly transportDiagnostics:
+      readonly TransportCalibrationFitDiagnostic[];
+  };
+  readonly topology: {
+    readonly confidence: ConfidenceClass;
+    readonly assumptions: readonly string[];
+    readonly planSteps: number;
+    readonly operationCounts: {
+      readonly compute: number;
+      readonly transfer: number;
+      readonly collective: number;
+      readonly allReduce: number;
+      readonly allToAll: number;
+    };
+    readonly metrics: TopologyWorkloadMetrics;
+    readonly topResources: readonly TopologyResourceUtilization[];
+  };
+  readonly roofline?: DashboardRooflineResult;
+  readonly pipelineExecution?: {
+    readonly components: readonly {
+      readonly id: string;
+      readonly phase: string;
+      readonly deviceId: string;
+    }[];
+    readonly transferOperations: number;
+  };
+  readonly speculative?: {
+    readonly family: SpeculativeProposerFamily;
+    readonly support: "onnx_genai_current" | "design_only";
+    readonly metrics: SpeculativeWorkloadMetrics;
+    readonly iterations: readonly SpeculativeWorkloadIteration[];
+    readonly finalTokenLength: number;
+    readonly tokenTrace?: {
+      readonly traceId: string;
+      readonly source: string;
+      readonly runtimeRevision: string;
+      readonly modelFingerprint: string;
+      readonly targetOnlyRunId: string;
+      readonly speculativeRunId: string;
+      readonly promptTokenCount: number;
+      readonly comparedTokenCount: number;
+      readonly matchesTargetOnly: boolean;
+      readonly firstMismatch?: SpeculativeTokenMismatch;
+      readonly expectedOutputTokenIds: readonly number[];
+      readonly committedOutputTokenIds: readonly number[];
+    };
+  };
+  readonly expertCache?: {
+    readonly metrics: ExpertCacheMetrics;
+    readonly routes: readonly ExpertRouteResult[];
+    readonly hotResidentBytes: number;
+    readonly warmResidentBytes: number;
+    readonly hotCapacityBytes: number;
+    readonly warmCapacityBytes: number;
+    readonly hotPartitions: readonly ExpertCachePartitionSnapshot[];
+    readonly warmPartitions: readonly ExpertCachePartitionSnapshot[];
+  };
+  /**
+   * What speculation bought against the same run without it, present only when
+   * the run speculated. The acceptance behind it is declared rather than
+   * predicted, and is reported alongside so the speedup is read as its
+   * consequence rather than as a measurement of the proposer.
+   */
+  readonly speculativeGain?: {
+    readonly baselineTokensPerSecond: number;
+    readonly speculativeTokensPerSecond: number;
+    readonly speedup: number;
+    /**
+     * Speedup the accepted length allows. A run cannot beat it, so a gap
+     * between it and the speedup is what drafting and verification cost.
+     */
+    readonly ceiling: number;
+    readonly committedTokensPerTargetForward: number;
+    readonly firstPositionAcceptance: number;
+    readonly acceptanceDecay: number;
+  };
+  readonly serving?: {
+    readonly decodeMode: "target_only" | SpeculativeProposerFamily;
+    readonly support: "onnx_genai_current" | "design_only" | "target_only";
+    readonly metrics: ServingMetrics;
+    /** KV token budget the scheduler was given, for byte reconciliation. */
+    readonly kvBudgetTokens: number;
+    readonly requests: readonly ServingRequestResult[];
+    readonly physicalReplayEvents?: number;
+    readonly maximumConcurrentPlans?: number;
+    readonly physicalDrainNs?: number;
+    readonly batches: readonly {
+      readonly batchId: number;
+      readonly sequenceCount: number;
+      readonly tokenWork: number;
+      readonly prefillSequences: number;
+      readonly decodeSequences: number;
+      readonly durationNs: number;
+      readonly cacheConstraintNs: number;
+      readonly expertRoutes: number;
+    }[];
+  };
+  readonly comparison?: readonly {
+    readonly rank: number;
+    readonly scenarioId: string;
+    readonly relativeToFastest: number;
+    readonly totalDurationNs: number;
+    readonly throughputTokensPerSecond: number;
+    readonly p95TimeToFirstTokenNs: number;
+    readonly p95InterTokenLatencyNs: number;
+    readonly averageRequestLatencyNs: number;
+    readonly kvHighWaterTokens: number;
+    readonly batches: number;
+    readonly confidence: ConfidenceClass;
+  }[];
+}
+
+export type DashboardCoreEvidence =
+  | {
+      readonly kind: "pipeline";
+      readonly topology: TopologyWorkloadResult;
+    }
+  | {
+      readonly kind: "fault";
+      readonly topology: TopologyWorkloadResult;
+    }
+  | {
+      readonly kind: "co_residency";
+      readonly result: MultiModelResult;
+    }
+  | {
+      readonly kind: "speculative";
+      readonly workload: SpeculativeWorkloadResult;
+      readonly topology: TopologyWorkloadResult;
+    }
+  | {
+      readonly kind: "expert_cache";
+      readonly workload: ExpertCacheWorkloadResult;
+      readonly topology: TopologyWorkloadResult;
+    }
+  | {
+      readonly kind: "serving";
+      readonly serving: TopologyServingResult;
+    }
+  | {
+      readonly kind: "serving_comparison";
+      readonly comparison: TopologyServingComparisonResult;
+    };
+
+export interface DashboardArtifactOutput {
+  readonly summary: Omit<DashboardResult, "durationMs">;
+  readonly evidence: DashboardCoreEvidence;
+}
+
+export type DashboardArtifact = SimulationResultArtifact<
+  DashboardRunConfig,
+  DashboardArtifactOutput
+>;
+
+export interface DashboardArtifactDownload {
+  readonly blob: Blob;
+  readonly fileName: string;
+  readonly artifactFingerprint: string;
+}
+
+export interface DashboardArtifactExpectation {
+  readonly sourceFileName: string;
+  readonly inputFingerprint: string;
+  readonly outputFingerprint: string;
+  readonly artifactFingerprint: string;
+}
+
+export interface DashboardArtifactReplay {
+  readonly sourceFileName: string;
+  readonly expectedInputFingerprint: string;
+  readonly actualInputFingerprint: string;
+  readonly expectedArtifactFingerprint: string;
+  readonly actualArtifactFingerprint: string;
+  readonly expectedOutputFingerprint: string;
+  readonly actualOutputFingerprint: string;
+  readonly inputMatches: boolean;
+  readonly outputMatches: boolean;
+  readonly matches: boolean;
+}
+
+export interface FrozenPlanBrowserResult {
+  readonly sourceFileName: string;
+  readonly artifact: {
+    readonly revision: number;
+    readonly artifactFingerprint: string;
+    readonly scenarioFingerprint: string;
+    readonly planFingerprint: string;
+  };
+  readonly scenario: {
+    readonly id: string;
+    readonly family: string;
+    readonly devices: number;
+    readonly links: number;
+    readonly ranks: number;
+  };
+  readonly plan: {
+    readonly id: string;
+    readonly executionId: string;
+    readonly topologyEpoch: number;
+    readonly steps: number;
+    readonly operationCounts: {
+      readonly compute: number;
+      readonly transfer: number;
+      readonly collective: number;
+    };
+  };
+  readonly execution: {
+    readonly status: "succeeded" | "failed" | "aborted";
+    readonly completedAtNs: number;
+    readonly rankCompletions: readonly RankCompletion[];
+    readonly rankStates: readonly RankTerminalState[];
+    readonly operationPreview: readonly PlanTraceEvent[];
+    readonly operationCount: number;
+  };
+  readonly replay: {
+    readonly status: "succeeded" | "failed" | "aborted";
+    readonly completedAtNs: number;
+    readonly appliedEvents: number;
+    readonly exact: boolean;
+  };
+}
+
+export interface OnnxStaticBrowserConfig {
+  readonly hardwarePreset:
+    | "dgx-h100"
+    | "dgx-h200"
+    | "2x-dgx-h100"
+    | "4x-mac-studio-m4"
+    | "a100-4x"
+    | "rtx-4090-2x";
+  readonly kvCacheQuantization: QuantType;
+  readonly activationQuantization: QuantType;
+  readonly batchSize: number;
+  readonly inputSeqLen: number;
+  readonly outputSeqLen: number;
+  readonly parallelism: ParallelismConfig;
+  readonly memory: MemoryPolicyConfig;
+}
+
+export interface OnnxStaticBrowserResult {
+  readonly sourceFileName: string;
+  readonly manifest: {
+    readonly revision: number;
+    readonly fingerprint: string;
+    readonly modelFileName: string;
+    readonly modelSha256: string;
+    readonly graphName: string;
+    readonly nodeCount: number;
+    readonly initializerCount: number;
+    readonly initializerLogicalBytes: number;
+    readonly externalDataFiles: number;
+    readonly architectureSource: string;
+    readonly profileReadiness: {
+      readonly ready: boolean;
+      readonly missingFields: readonly string[];
+    };
+  };
+  readonly config: OnnxStaticBrowserConfig;
+  readonly model: ModelProfile;
+  readonly analysis: StaticAnalysisResult;
+}
+
+export interface OnnxSearchBrowserConfig {
+  readonly objective: StaticSearchObjective;
+  readonly topologyScope: "selected" | "all";
+  readonly kvCacheScope: "selected" | "fp16_fp8";
+  readonly batchScope: "selected" | "common";
+  readonly parallelismScope: "selected" | "common";
+  readonly offloadScope: "selected" | "none_partial";
+  readonly maximumDeviceUsedFraction: number;
+  readonly topK: number;
+  readonly maxCandidates: number;
+}
+
+export interface OnnxSearchBrowserResult {
+  readonly sourceFileName: string;
+  readonly manifest: {
+    readonly fingerprint: string;
+    readonly modelFileName: string;
+  };
+  readonly modelName: string;
+  readonly baseConfig: OnnxStaticBrowserConfig;
+  readonly searchConfig: OnnxSearchBrowserConfig;
+  readonly result: StaticSearchResult;
+}
+
+export interface WorkerRunProgress {
+  readonly progress: number;
+  readonly phase: string;
+}
+
+export type WorkerRunProgressReporter = (
+  update: WorkerRunProgress,
+) => void;
+
+export type WorkerRequest =
+  | {
+      readonly type: "run";
+      readonly runId: number;
+      readonly config: DashboardRunConfig;
+      readonly expectedArtifact?: DashboardArtifactExpectation;
+    }
+  | {
+      readonly type: "run-frozen-plan";
+      readonly runId: number;
+      readonly sourceFileName: string;
+      readonly artifactText: string;
+    }
+  | {
+      readonly type: "run-onnx-static";
+      readonly runId: number;
+      readonly sourceFileName: string;
+      readonly artifactText: string;
+      readonly config: OnnxStaticBrowserConfig;
+    }
+  | {
+      readonly type: "run-onnx-search";
+      readonly runId: number;
+      readonly sourceFileName: string;
+      readonly artifactText: string;
+      readonly baseConfig: OnnxStaticBrowserConfig;
+      readonly searchConfig: OnnxSearchBrowserConfig;
+    };
+
+export type WorkerResponse =
+  | {
+      readonly type: "progress";
+      readonly runId: number;
+      readonly progress: number;
+      readonly phase: string;
+    }
+  | {
+      readonly type: "result";
+      readonly runId: number;
+      readonly summary: Omit<DashboardResult, "durationMs">;
+      readonly artifact: DashboardArtifactDownload;
+      readonly artifactReplay?: DashboardArtifactReplay;
+      readonly durationMs: number;
+    }
+  | {
+      readonly type: "frozen-plan-result";
+      readonly runId: number;
+      readonly result: FrozenPlanBrowserResult;
+      readonly durationMs: number;
+    }
+  | {
+      readonly type: "onnx-static-result";
+      readonly runId: number;
+      readonly result: OnnxStaticBrowserResult;
+      readonly durationMs: number;
+    }
+  | {
+      readonly type: "onnx-search-result";
+      readonly runId: number;
+      readonly result: OnnxSearchBrowserResult;
+      readonly durationMs: number;
+    }
+  | {
+      readonly type: "error";
+      readonly runId: number;
+      readonly message: string;
+    };
