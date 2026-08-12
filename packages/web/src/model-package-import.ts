@@ -99,7 +99,7 @@ export async function inspectBrowserModelPackage(
     const manifest = await inspectOnnxModelBytes({
       modelFileName: modelPath,
       modelBytes,
-      metadata: metadataValue,
+      metadata: metadataEntry === undefined ? undefined : metadataValue,
       sha256: async (bytes) => bytesToHex(sha256(bytes)),
       resolveExternalData: async (location) => {
         const externalPath = resolvePackagePath(modelDirectory, location);

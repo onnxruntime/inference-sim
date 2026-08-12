@@ -512,7 +512,17 @@ function safeExternalLocation(value: string | undefined, tensor: string): string
       `unsafe or missing external-data location for ${tensor}`,
     );
   }
-  return value.replaceAll("\\", "/");
+  const normalized = value
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
+  if (normalized.length === 0) {
+    throw new Error(
+      `unsafe or missing external-data location for ${tensor}`,
+    );
+  }
+  return normalized;
 }
 
 function parseExternalInteger(value: string, label: string): number {

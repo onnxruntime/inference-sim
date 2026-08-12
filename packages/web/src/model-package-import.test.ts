@@ -137,7 +137,23 @@ speculative:
         },
       }],
       externalDataFiles: [],
+      architecture: { source: "none" },
       totals: { externalInitializerBytes: 16 },
+    });
+  });
+
+  it("normalizes relative external data paths", async () => {
+    const result = await inspectBrowserModelPackage([
+      packageFile(
+        "model/decoder.onnx",
+        tinyOnnxModel("./decoder.onnx.data", 16),
+      ),
+      packageFile("model/decoder.onnx.data", new Uint8Array(16)),
+    ]);
+
+    expect(result.models[0]!.manifest.externalDataFiles[0]).toMatchObject({
+      location: "decoder.onnx.data",
+      byteLength: 16,
     });
   });
 
