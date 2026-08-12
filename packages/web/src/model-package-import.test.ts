@@ -141,6 +141,15 @@ speculative:
     });
   });
 
+  it("rejects unsafe external data paths without resolving them", async () => {
+    await expect(inspectBrowserModelPackage([
+      packageFile(
+        "model/decoder.onnx",
+        tinyOnnxModel("../decoder.onnx.data", 16),
+      ),
+    ])).rejects.toThrow("unsafe or missing external-data location");
+  });
+
   it("rejects ambiguous metadata roots", async () => {
     await expect(inspectBrowserModelPackage([
       packageFile("model/a/inference_metadata.yaml", "{}"),

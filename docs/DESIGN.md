@@ -1418,7 +1418,7 @@ dtypes, dimensions, logical/storage extents, and sorted operator counts, and
 normalize only explicitly published architecture fields. External paths must
 remain inside the model package; when a sidecar is supplied, every referenced
 range must fit it. Sidecars are streamed for hashing rather than loaded into
-memory and may be omitted when importing a model for simulation.
+memory and may be omitted when importing a model in the browser for simulation.
 Profile readiness lists every missing architecture field; tensor-name pattern
 matching is not accepted as architecture evidence. For MoE, readiness also
 requires active expert count plus routed and shared expert bytes per layer;
