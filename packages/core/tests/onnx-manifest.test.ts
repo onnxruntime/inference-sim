@@ -109,17 +109,24 @@ describe("ONNX model manifest", () => {
       .toThrow("totals do not match initializer inventory");
   });
 
-  it("rejects architecture readiness drift and unsafe external paths", () => {
+  it("rejects architecture readiness drift", () => {
     const incomplete = unsigned();
     delete (incomplete.architecture as { headDimension?: number }).headDimension;
     expect(() => createOnnxModelManifest(incomplete))
       .toThrow("profile readiness does not match architecture evidence");
+  });
 
+  it("preserves external initializer location metadata verbatim", () => {
     const unsafe = unsigned();
     (unsafe.initializers[0].storage as { location: string }).location =
       "../weights.data";
-    expect(() => createOnnxModelManifest(unsafe))
-      .toThrow("must remain inside the model package");
+    expect(createOnnxModelManifest(unsafe).initializers[0].storage.location)
+      .toBe("../weights.data");
+
+    const missing = unsigned();
+    delete (missing.initializers[0].storage as { location?: string }).location;
+    expect(createOnnxModelManifest(missing).initializers[0].storage.location)
+      .toBeUndefined();
   });
 
   it("resolves a capacity-preserving model profile with explicit assumptions", () => {

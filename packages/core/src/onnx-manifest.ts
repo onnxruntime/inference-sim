@@ -421,7 +421,7 @@ function parseInitializer(
       `${label} storage`,
     );
   } else if (kind === "external") {
-    assertExactKeys(
+    assertAllowedKeys(
       storageRecord,
       ["kind", "byteLength", "location", "offset"],
       `${label} storage`,
@@ -445,10 +445,14 @@ function parseInitializer(
           storageRecord.byteLength,
           `${label} storage byteLength`,
         ),
-        location: requireSafeRelativePath(
-          storageRecord.location,
-          `${label} external location`,
-        ),
+        ...(storageRecord.location === undefined
+          ? {}
+          : {
+              location: requireStringValue(
+                storageRecord.location,
+                `${label} external location`,
+              ),
+            }),
         offset: requireNonNegativeInteger(
           storageRecord.offset,
           `${label} external offset`,
