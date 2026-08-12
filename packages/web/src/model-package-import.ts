@@ -105,9 +105,7 @@ export async function inspectBrowserModelPackage(
         const externalPath = resolvePackagePath(modelDirectory, location);
         const external = files.get(externalPath);
         if (external === undefined) {
-          throw new Error(
-            `${modelPath} references missing external data ${externalPath}`,
-          );
+          return undefined;
         }
         return {
           byteLength: external.size,

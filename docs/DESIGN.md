@@ -1413,11 +1413,12 @@ CLI/browser inputs use versioned YAML or JSON and may reference:
 ONNX parsing extracts graph structure, shapes, dtypes, external-data extents,
 operator profiles, and runtime metadata. It does not infer measured throughput.
 Revision-2 `inference-sim/onnx-model` manifests bind the ONNX protobuf and each
-referenced external-data file by SHA-256, retain canonical initializer names,
+supplied external-data file by SHA-256, retain canonical initializer names,
 dtypes, dimensions, logical/storage extents, and sorted operator counts, and
 normalize only explicitly published architecture fields. External paths must
-remain inside the model package and every referenced range must fit the actual
-sidecar. Sidecars are streamed for hashing rather than loaded into memory.
+remain inside the model package; when a sidecar is supplied, every referenced
+range must fit it. Sidecars are streamed for hashing rather than loaded into
+memory and may be omitted when importing a model for simulation.
 Profile readiness lists every missing architecture field; tensor-name pattern
 matching is not accepted as architecture evidence. For MoE, readiness also
 requires active expert count plus routed and shared expert bytes per layer;
@@ -1792,7 +1793,9 @@ static-analysis sessions. It also accepts a local model directory or selected
 package files. Local package import stays entirely in the static application:
 a dedicated browser Worker decodes ONNX protobufs with the same shared
 inspector used by the CLI, validates external-data paths and extents, hashes
-sidecars incrementally, and parses portable `inference_metadata.yaml|json`.
+supplied sidecars incrementally, and parses portable
+`inference_metadata.yaml|json`. External-data files are optional because the
+ONNX protobuf carries the initializer metadata required for simulation.
 The normalized metadata preserves multi-model components, dataflow edges,
 pipeline stages, device preferences, hardware requirements, and exact
 speculative evidence. Known fields fail closed while unknown schema-extension

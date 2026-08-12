@@ -100,7 +100,7 @@ speculative:
       .toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("rejects missing model components and sidecars", async () => {
+  it("rejects missing model components", async () => {
     await expect(inspectBrowserModelPackage([
       packageFile(
         "model/inference_metadata.json",
@@ -118,13 +118,27 @@ speculative:
         tinyOnnxModel("decoder.onnx.data", 16),
       ),
     ])).rejects.toThrow("is missing missing.onnx");
+  });
 
-    await expect(inspectBrowserModelPackage([
+  it("parses an ONNX model without its external data file", async () => {
+    const result = await inspectBrowserModelPackage([
       packageFile(
         "model/decoder.onnx",
         tinyOnnxModel("decoder.onnx.data", 16),
       ),
-    ])).rejects.toThrow("references missing external data");
+    ]);
+
+    expect(result.models[0]!.manifest).toMatchObject({
+      initializers: [{
+        storage: {
+          kind: "external",
+          location: "decoder.onnx.data",
+          byteLength: 16,
+        },
+      }],
+      externalDataFiles: [],
+      totals: { externalInitializerBytes: 16 },
+    });
   });
 
   it("rejects ambiguous metadata roots", async () => {

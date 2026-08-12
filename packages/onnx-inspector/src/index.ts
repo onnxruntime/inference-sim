@@ -32,7 +32,7 @@ export interface InspectOnnxModelInput {
   readonly sha256: (bytes: Uint8Array) => Promise<string>;
   readonly resolveExternalData: (
     location: string,
-  ) => Promise<OnnxExternalDataSource>;
+  ) => Promise<OnnxExternalDataSource | undefined>;
 }
 
 export async function inspectOnnxModelBytes({
@@ -285,7 +285,7 @@ async function inspectExternalDataFiles(
   initializers: readonly OnnxInitializerManifest[],
   resolveExternalData: (
     location: string,
-  ) => Promise<OnnxExternalDataSource>,
+  ) => Promise<OnnxExternalDataSource | undefined>,
 ): Promise<OnnxExternalDataFileManifest[]> {
   const rangesByLocation = new Map<string, Array<readonly [number, number]>>();
   for (const tensor of initializers) {
@@ -306,6 +306,9 @@ async function inspectExternalDataFiles(
   const files: OnnxExternalDataFileManifest[] = [];
   for (const location of [...rangesByLocation.keys()].sort()) {
     const source = await resolveExternalData(location);
+    if (source === undefined) {
+      continue;
+    }
     if (!Number.isSafeInteger(source.byteLength)) {
       throw new Error(`external-data file is too large: ${location}`);
     }
