@@ -20,7 +20,6 @@ export interface BrowserPackageFile {
   readonly size: number;
   readonly webkitRelativePath?: string;
   readonly arrayBuffer: () => Promise<ArrayBuffer>;
-  readonly stream: () => ReadableStream<Uint8Array>;
 }
 
 export interface ImportedOnnxModel {
@@ -95,23 +94,11 @@ export async function inspectBrowserModelPackage(
       throw new Error(`${modelPath} exceeds the 512 MiB ONNX protobuf limit`);
     }
     const modelBytes = new Uint8Array(await file.arrayBuffer());
-    const modelDirectory = parentPath(modelPath);
     const manifest = await inspectOnnxModelBytes({
       modelFileName: modelPath,
       modelBytes,
       metadata: metadataEntry === undefined ? undefined : metadataValue,
       sha256: async (bytes) => bytesToHex(sha256(bytes)),
-      resolveExternalData: async (location) => {
-        const externalPath = resolvePackagePath(modelDirectory, location);
-        const external = files.get(externalPath);
-        if (external === undefined) {
-          return undefined;
-        }
-        return {
-          byteLength: external.size,
-          sha256: () => sha256Stream(external),
-        };
-      },
     });
     models.push({
       fileName: modelPath,
@@ -207,34 +194,6 @@ async function parseMetadataFile(
       }`,
     );
   }
-}
-
-async function sha256Stream(file: BrowserPackageFile): Promise<string> {
-  const hash = sha256.create();
-  const reader = file.stream().getReader();
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) {
-        return bytesToHex(hash.digest());
-      }
-      hash.update(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function resolvePackagePath(directory: string, location: string): string {
-  const normalizedLocation = normalizeRelativePath(location);
-  return directory.length === 0
-    ? normalizedLocation
-    : `${directory}/${normalizedLocation}`;
-}
-
-function parentPath(path: string): string {
-  const separator = path.lastIndexOf("/");
-  return separator < 0 ? "" : path.slice(0, separator);
 }
 
 function normalizeSelectionPath(path: string): string {

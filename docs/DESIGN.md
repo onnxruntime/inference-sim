@@ -1412,13 +1412,12 @@ CLI/browser inputs use versioned YAML or JSON and may reference:
 
 ONNX parsing extracts graph structure, shapes, dtypes, external-data extents,
 operator profiles, and runtime metadata. It does not infer measured throughput.
-Revision-2 `inference-sim/onnx-model` manifests bind the ONNX protobuf and each
-supplied external-data file by SHA-256, retain canonical initializer names,
-dtypes, dimensions, logical/storage extents, and sorted operator counts, and
-normalize only explicitly published architecture fields. External paths must
-remain inside the model package; when a sidecar is supplied, every referenced
-range must fit it. Sidecars are streamed for hashing rather than loaded into
-memory and may be omitted when importing a model in the browser for simulation.
+Revision-2 `inference-sim/onnx-model` manifests bind the ONNX protobuf by
+SHA-256, retain canonical initializer names, dtypes, dimensions,
+logical/storage extents, and sorted operator counts, and normalize only
+explicitly published architecture fields. External-data paths are validated
+from protobuf metadata, but sidecar files are never opened, sized, or hashed
+because simulation only needs initializer metadata carried by the ONNX graph.
 Profile readiness lists every missing architecture field; tensor-name pattern
 matching is not accepted as architecture evidence. For MoE, readiness also
 requires active expert count plus routed and shared expert bytes per layer;
@@ -1778,8 +1777,8 @@ ONNX 1.20 schema and emits the shared revision-2 model manifest. Optional
 onnx-genai fixture manifests, legacy `genai_config.json`, and portable
 inference metadata are normalized without changing their evidence strength.
 Malformed protobufs, sparse/segmented initializers, unsafe external paths,
-truncated sidecars, duplicate identities, inconsistent totals, stale
-revisions, and fingerprint mismatches fail closed.
+duplicate identities, inconsistent totals, stale revisions, and fingerprint
+mismatches fail closed.
 The `onnx-static` command resolves a ready manifest into a `ModelProfile` and
 runs the shared static analyzer. Initializer byte and element totals remain
 exact inventory; dominant weight dtype selection, non-expert per-layer
@@ -1792,10 +1791,10 @@ The React workbench accepts that same revision-2 JSON manifest for direct
 static-analysis sessions. It also accepts a local model directory or selected
 package files. Local package import stays entirely in the static application:
 a dedicated browser Worker decodes ONNX protobufs with the same shared
-inspector used by the CLI, validates external-data paths and extents, hashes
-supplied sidecars incrementally, and parses portable
-`inference_metadata.yaml|json`. External-data files are optional because the
-ONNX protobuf carries the initializer metadata required for simulation.
+inspector used by the CLI, validates external-data paths and extents without
+opening sidecars, and parses portable `inference_metadata.yaml|json`.
+External-data files are ignored because the ONNX protobuf carries the
+initializer metadata required for simulation.
 The normalized metadata preserves multi-model components, dataflow edges,
 pipeline stages, device preferences, hardware requirements, and exact
 speculative evidence. Known fields fail closed while unknown schema-extension

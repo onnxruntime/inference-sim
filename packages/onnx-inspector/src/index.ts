@@ -12,7 +12,6 @@ import {
   ONNX_MODEL_MANIFEST_REVISION,
   createOnnxModelManifest,
   type OnnxArchitectureEvidence,
-  type OnnxExternalDataFileManifest,
   type OnnxInitializerManifest,
   type OnnxModelManifest,
   type OnnxOperatorCount,
@@ -20,19 +19,11 @@ import {
 
 export const MAX_ONNX_PROTO_BYTES = 512 * 1024 * 1024;
 
-export interface OnnxExternalDataSource {
-  readonly byteLength: number;
-  readonly sha256: () => Promise<string>;
-}
-
 export interface InspectOnnxModelInput {
   readonly modelFileName: string;
   readonly modelBytes: Uint8Array;
   readonly metadata?: unknown;
   readonly sha256: (bytes: Uint8Array) => Promise<string>;
-  readonly resolveExternalData: (
-    location: string,
-  ) => Promise<OnnxExternalDataSource | undefined>;
 }
 
 export async function inspectOnnxModelBytes({
@@ -40,7 +31,6 @@ export async function inspectOnnxModelBytes({
   modelBytes,
   metadata,
   sha256,
-  resolveExternalData,
 }: InspectOnnxModelInput): Promise<OnnxModelManifest> {
   if (modelBytes.byteLength > MAX_ONNX_PROTO_BYTES) {
     throw new Error("ONNX protobuf exceeds the 512 MiB inspection limit");
@@ -71,10 +61,6 @@ export async function inspectOnnxModelBytes({
   const initializers = initializerRecords.map(({ tensor, scopedName }) => (
     inspectInitializer(tensor, scopedName)
   ));
-  const externalDataFiles = await inspectExternalDataFiles(
-    initializers,
-    resolveExternalData,
-  );
   const operatorInventory: OnnxOperatorCount[] = [...operators.entries()]
     .map(([identity, count]) => {
       const separator = identity.indexOf("\0");
@@ -151,7 +137,7 @@ export async function inspectOnnxModelBytes({
       operators: operatorInventory,
     },
     initializers,
-    externalDataFiles,
+    externalDataFiles: [],
     architecture,
     totals,
     profileReadiness: {
@@ -279,55 +265,6 @@ function inspectInitializer(
         : logicalByteLength,
     },
   };
-}
-
-async function inspectExternalDataFiles(
-  initializers: readonly OnnxInitializerManifest[],
-  resolveExternalData: (
-    location: string,
-  ) => Promise<OnnxExternalDataSource | undefined>,
-): Promise<OnnxExternalDataFileManifest[]> {
-  const rangesByLocation = new Map<string, Array<readonly [number, number]>>();
-  for (const tensor of initializers) {
-    if (tensor.storage.kind !== "external") {
-      continue;
-    }
-    const location = tensor.storage.location!;
-    const start = tensor.storage.offset!;
-    const end = checkedAdd(
-      start,
-      tensor.storage.byteLength,
-      `${tensor.name} external extent`,
-    );
-    const ranges = rangesByLocation.get(location) ?? [];
-    ranges.push([start, end]);
-    rangesByLocation.set(location, ranges);
-  }
-  const files: OnnxExternalDataFileManifest[] = [];
-  for (const location of [...rangesByLocation.keys()].sort()) {
-    const source = await resolveExternalData(location);
-    if (source === undefined) {
-      continue;
-    }
-    if (!Number.isSafeInteger(source.byteLength)) {
-      throw new Error(`external-data file is too large: ${location}`);
-    }
-    const ranges = rangesByLocation.get(location)!;
-    for (const [, end] of ranges) {
-      if (end > source.byteLength) {
-        throw new Error(
-          `external-data range exceeds ${location}: ${end} > ${source.byteLength}`,
-        );
-      }
-    }
-    files.push({
-      location,
-      byteLength: source.byteLength,
-      referencedByteLength: unionByteLength(ranges),
-      sha256: await source.sha256(),
-    });
-  }
-  return files;
 }
 
 function normalizeArchitectureEvidence(
@@ -568,31 +505,6 @@ function checkedAdd(left: number, right: number, label: string): number {
     throw new Error(`${label} exceeds safe integer range`);
   }
   return sum;
-}
-
-function unionByteLength(
-  ranges: readonly (readonly [number, number])[],
-): number {
-  const ordered = [...ranges].sort((left, right) => (
-    left[0] - right[0] || left[1] - right[1]
-  ));
-  let total = 0;
-  let start = -1;
-  let end = -1;
-  for (const [nextStart, nextEnd] of ordered) {
-    if (nextStart > end) {
-      if (start >= 0) {
-        total = checkedAdd(total, end - start, "external referenced bytes");
-      }
-      start = nextStart;
-      end = nextEnd;
-    } else {
-      end = Math.max(end, nextEnd);
-    }
-  }
-  return start < 0
-    ? 0
-    : checkedAdd(total, end - start, "external referenced bytes");
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

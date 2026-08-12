@@ -52,12 +52,11 @@ function packageFile(
     size: blob.size,
     webkitRelativePath: path,
     arrayBuffer: () => blob.arrayBuffer(),
-    stream: () => blob.stream(),
   };
 }
 
 describe("browser model package import", () => {
-  it("parses local protobufs, pipeline metadata, and external sidecars", async () => {
+  it("parses local protobufs and pipeline metadata without reading external sidecars", async () => {
     const metadata = `
 pipeline:
   models:
@@ -77,7 +76,12 @@ speculative:
         "model/decoder.onnx",
         tinyOnnxModel("decoder.onnx.data", 16),
       ),
-      packageFile("model/decoder.onnx.data", new Uint8Array(16).fill(7)),
+      {
+        ...packageFile("model/decoder.onnx.data", new Uint8Array(16).fill(7)),
+        arrayBuffer: () => {
+          throw new Error("external data files must not be read");
+        },
+      },
     ]);
 
     expect(result.metadata.pipelineStrategy).toBe("autoregressive");
@@ -91,13 +95,7 @@ speculative:
         totals: { externalInitializerBytes: 16 },
       },
     });
-    expect(result.models[0]!.manifest.externalDataFiles[0]).toMatchObject({
-      location: "decoder.onnx.data",
-      byteLength: 16,
-      referencedByteLength: 16,
-    });
-    expect(result.models[0]!.manifest.externalDataFiles[0]!.sha256)
-      .toMatch(/^[0-9a-f]{64}$/);
+    expect(result.models[0]!.manifest.externalDataFiles).toEqual([]);
   });
 
   it("rejects missing model components", async () => {
@@ -142,18 +140,28 @@ speculative:
     });
   });
 
-  it("normalizes relative external data paths", async () => {
+  it("normalizes relative external data paths without reading sidecars", async () => {
     const result = await inspectBrowserModelPackage([
       packageFile(
         "model/decoder.onnx",
         tinyOnnxModel("./decoder.onnx.data", 16),
       ),
-      packageFile("model/decoder.onnx.data", new Uint8Array(16)),
+      {
+        ...packageFile("model/decoder.onnx.data", new Uint8Array(16)),
+        arrayBuffer: () => {
+          throw new Error("external data files must not be read");
+        },
+      },
     ]);
 
-    expect(result.models[0]!.manifest.externalDataFiles[0]).toMatchObject({
-      location: "decoder.onnx.data",
-      byteLength: 16,
+    expect(result.models[0]!.manifest).toMatchObject({
+      initializers: [{
+        storage: {
+          location: "decoder.onnx.data",
+          byteLength: 16,
+        },
+      }],
+      externalDataFiles: [],
     });
   });
 

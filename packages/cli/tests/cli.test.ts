@@ -100,13 +100,11 @@ describe("CLI", () => {
     );
   });
 
-  it("extracts a deterministic ONNX manifest with verified external data", async () => {
+  it("extracts a deterministic ONNX manifest without reading external data", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inference-sim-onnx-"));
     const modelPath = join(directory, "model.onnx");
-    const weightsPath = join(directory, "model.onnx.data");
     const metadataPath = join(directory, "manifest.json");
     await writeFile(modelPath, tinyOnnxModel("model.onnx.data", 16));
-    await writeFile(weightsPath, new Uint8Array(16).fill(7));
     await writeFile(metadataPath, JSON.stringify({
       architecture: "TinyCausalLM",
       vocab_size: 8,
@@ -133,10 +131,7 @@ describe("CLI", () => {
       kind: string;
       graph: { nodeCount: number; operators: unknown[] };
       totals: { externalInitializerBytes: number };
-      externalDataFiles: Array<{
-        location: string;
-        referencedByteLength: number;
-      }>;
+      externalDataFiles: unknown[];
       profileReadiness: { ready: boolean; missingFields: string[] };
     };
     expect(manifest).toMatchObject({
@@ -146,12 +141,7 @@ describe("CLI", () => {
       profileReadiness: { ready: true, missingFields: [] },
     });
     expect(manifest.graph.operators).toHaveLength(1);
-    expect(manifest.externalDataFiles).toEqual([
-      expect.objectContaining({
-        location: "model.onnx.data",
-        referencedByteLength: 16,
-      }),
-    ]);
+    expect(manifest.externalDataFiles).toEqual([]);
   });
 
   it("runs static analysis from an inspected ONNX package", async () => {
@@ -160,10 +150,6 @@ describe("CLI", () => {
     const metadataPath = join(directory, "manifest.json");
     const configPath = join(directory, "config.json");
     await writeFile(modelPath, tinyOnnxModel("model.onnx.data", 16));
-    await writeFile(
-      join(directory, "model.onnx.data"),
-      new Uint8Array(16).fill(3),
-    );
     await writeFile(metadataPath, JSON.stringify({
       architecture: "TinyCausalLM",
       vocab_size: 8,
@@ -318,7 +304,7 @@ describe("CLI", () => {
       .toBe(true);
   });
 
-  it("rejects unsafe or truncated ONNX external-data references", async () => {
+  it("rejects unsafe external-data references without opening safe sidecars", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inference-sim-onnx-"));
     const modelPath = join(directory, "model.onnx");
     await writeFile(modelPath, tinyOnnxModel("../weights.data", 16));
@@ -328,9 +314,14 @@ describe("CLI", () => {
 
     await writeFile(modelPath, tinyOnnxModel("weights.data", 16));
     await writeFile(join(directory, "weights.data"), new Uint8Array(8));
-    const truncated = captureIo();
-    expect(await runCli(["onnx-inspect", modelPath], truncated.io)).toBe(1);
-    expect(truncated.stderr()).toContain("external-data range exceeds");
+    const safe = captureIo();
+    expect(await runCli(["onnx-inspect", modelPath], safe.io)).toBe(0);
+    const manifest = JSON.parse(safe.stdout()) as {
+      externalDataFiles: unknown[];
+      totals: { externalInitializerBytes: number };
+    };
+    expect(manifest.externalDataFiles).toEqual([]);
+    expect(manifest.totals.externalInitializerBytes).toBe(16);
   });
 
   it("materializes a parameterized multi-GPU scenario target", async () => {
