@@ -227,7 +227,6 @@ function inspectInitializer(
     tensor.externalData.map((entry) => [entry.key, entry.value]),
   );
   if (tensor.dataLocation === 1 || tensor.externalData.length > 0) {
-    const location = safeExternalLocation(external.location, scopedName);
     const offset = parseExternalInteger(
       external.offset ?? "0",
       `${scopedName} external offset`,
@@ -246,7 +245,9 @@ function inspectInitializer(
       logicalByteLength,
       storage: {
         kind: "external",
-        location,
+        ...(external.location === undefined
+          ? {}
+          : { location: external.location }),
         offset,
         byteLength,
       },
@@ -434,32 +435,6 @@ function dataTypeBits(dataType: string): number {
     throw new Error(`unsupported ONNX tensor data type ${dataType}`);
   }
   return bits;
-}
-
-function safeExternalLocation(value: string | undefined, tensor: string): string {
-  if (
-    value === undefined
-    || value.length === 0
-    || value.startsWith("/")
-    || value.startsWith("\\")
-    || /^[A-Za-z]:/.test(value)
-    || value.split(/[\\/]/).some((segment) => segment === "..")
-  ) {
-    throw new Error(
-      `unsafe or missing external-data location for ${tensor}`,
-    );
-  }
-  const normalized = value
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((segment) => segment !== "" && segment !== ".")
-    .join("/");
-  if (normalized.length === 0) {
-    throw new Error(
-      `unsafe or missing external-data location for ${tensor}`,
-    );
-  }
-  return normalized;
 }
 
 function parseExternalInteger(value: string, label: string): number {

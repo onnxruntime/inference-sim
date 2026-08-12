@@ -7,7 +7,7 @@ import {
 } from "./model-package-import.js";
 
 function tinyOnnxModel(
-  externalLocation: string,
+  externalLocation: string | undefined,
   externalLength: number,
 ): Uint8Array {
   return toBinary(ModelProtoSchema, fromJson(ModelProtoSchema, {
@@ -25,7 +25,9 @@ function tinyOnnxModel(
         dims: ["2", "2"],
         dataType: 1,
         externalData: [
-          { key: "location", value: externalLocation },
+          ...(externalLocation === undefined
+            ? []
+            : [{ key: "location", value: externalLocation }]),
           { key: "offset", value: "0" },
           { key: "length", value: String(externalLength) },
         ],
@@ -140,7 +142,7 @@ speculative:
     });
   });
 
-  it("normalizes relative external data paths without reading sidecars", async () => {
+  it("preserves relative external data paths without reading sidecars", async () => {
     const result = await inspectBrowserModelPackage([
       packageFile(
         "model/decoder.onnx",
@@ -157,7 +159,7 @@ speculative:
     expect(result.models[0]!.manifest).toMatchObject({
       initializers: [{
         storage: {
-          location: "decoder.onnx.data",
+          location: "./decoder.onnx.data",
           byteLength: 16,
         },
       }],
@@ -165,13 +167,44 @@ speculative:
     });
   });
 
-  it("rejects unsafe external data paths without resolving them", async () => {
-    await expect(inspectBrowserModelPackage([
+  it("preserves unsafe-looking external data paths without resolving them", async () => {
+    const result = await inspectBrowserModelPackage([
       packageFile(
         "model/decoder.onnx",
         tinyOnnxModel("../decoder.onnx.data", 16),
       ),
-    ])).rejects.toThrow("unsafe or missing external-data location");
+    ]);
+
+    expect(result.models[0]!.manifest).toMatchObject({
+      initializers: [{
+        storage: {
+          location: "../decoder.onnx.data",
+          byteLength: 16,
+        },
+      }],
+      externalDataFiles: [],
+    });
+  });
+
+  it("parses external initializers without location metadata", async () => {
+    const result = await inspectBrowserModelPackage([
+      packageFile(
+        "model/decoder.onnx",
+        tinyOnnxModel(undefined, 16),
+      ),
+    ]);
+
+    expect(result.models[0]!.manifest).toMatchObject({
+      initializers: [{
+        storage: {
+          kind: "external",
+          byteLength: 16,
+        },
+      }],
+      externalDataFiles: [],
+    });
+    expect(result.models[0]!.manifest.initializers[0]?.storage.location)
+      .toBeUndefined();
   });
 
   it("rejects ambiguous metadata roots", async () => {

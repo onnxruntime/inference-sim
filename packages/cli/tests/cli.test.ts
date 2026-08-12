@@ -304,22 +304,19 @@ describe("CLI", () => {
       .toBe(true);
   });
 
-  it("rejects unsafe external-data references without opening safe sidecars", async () => {
+  it("preserves external-data references without opening sidecars", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inference-sim-onnx-"));
     const modelPath = join(directory, "model.onnx");
     await writeFile(modelPath, tinyOnnxModel("../weights.data", 16));
-    const unsafe = captureIo();
-    expect(await runCli(["onnx-inspect", modelPath], unsafe.io)).toBe(1);
-    expect(unsafe.stderr()).toContain("unsafe or missing external-data location");
-
-    await writeFile(modelPath, tinyOnnxModel("weights.data", 16));
     await writeFile(join(directory, "weights.data"), new Uint8Array(8));
-    const safe = captureIo();
-    expect(await runCli(["onnx-inspect", modelPath], safe.io)).toBe(0);
-    const manifest = JSON.parse(safe.stdout()) as {
+    const capture = captureIo();
+    expect(await runCli(["onnx-inspect", modelPath], capture.io)).toBe(0);
+    const manifest = JSON.parse(capture.stdout()) as {
+      initializers: Array<{ storage: { location?: string } }>;
       externalDataFiles: unknown[];
       totals: { externalInitializerBytes: number };
     };
+    expect(manifest.initializers[0]?.storage.location).toBe("../weights.data");
     expect(manifest.externalDataFiles).toEqual([]);
     expect(manifest.totals.externalInitializerBytes).toBe(16);
   });
